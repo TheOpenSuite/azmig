@@ -111,6 +111,26 @@ To avoid passing tokens in plain text, *azmig* supports the following environmen
 | `--help`    | Use for more information and how to use it.                          |
 
 ---
+config/sample-migration.json
+```bash
+{
+  "SrcPlat": "github",
+  "SrcOrg": "my-source-github-org",
+  "SrcProj": "not-applicable-for-github",
+  "SrcTokn": "",
+  "Repo": "original-repo:new-name,another-repo,third-repo:renamed-target",
+  "TrgtPlat": "azure",
+  "TrgtOrg": "my-target-azure-org",
+  "TrgtProj": "TargetAzureProject",
+  "TrgtTokn": "",
+  "Wiki": true,
+  "Boards": false,
+  "TypeMapping": "Task:Task,Bug:Issue",
+  "Config": false
+}
+```
+
+---
 ## Contributing
 
 1. Fork the repository.

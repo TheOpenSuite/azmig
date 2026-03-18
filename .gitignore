@@ -1,0 +1,15 @@
+azmig
+azmig.exe
+*.exe
+*.bin
+
+dist/
+
+config/*.json
+!config/.gitkeep
+
+tmp_folder_*
+.env
+
+go.sum
+*.test
