@@ -1,6 +1,9 @@
 # azmig
 
-[![License](https://img.shields.io/badge/License-Apache%202.0-red.svg)](https://opensource.org/licenses/Apache-2.0)
+[![License: GPL v3](https://img.shields.io/badge/License-GPLv3-blue.svg)](https://www.gnu.org/licenses/gpl-3.0)
+[![Latest Release](https://img.shields.io/github/v/release/theopensuite/azmig?style=flat-square&color=orange)](https://github.com/your-username/azmig/releases)
+[![Go Version](https://img.shields.io/github/go-mod/go-version/theopensuite/azmig?style=flat-square)](https://github.com/your-username/azmig/blob/main/go.mod)
+[![Build Status](https://github.com/theopensuite/azmig/actions/workflows/release.yml/badge.svg)](https://github.com/theopensuite/azmig/actions)
 
 *azmig* is a Go-based CLI tool made primarly to centralize and partially automate migrations between different platforms like Azure DevOps, GitHub, and GitLab or same platform but different organizations. It can be used in mass repository migration, wiki transfers, and Azure-to-Azure board/work-item migrations.
 
