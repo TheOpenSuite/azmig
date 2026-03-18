@@ -118,12 +118,12 @@ func (v *VerifyC) Run() error {
 type RunC struct {
 	SrcPlat     string `help:"Source platform (e.g., 'github')." name:"src-plat" default:"azure" enum:"azure, github, gitlab"`
 	SrcOrg      string `help:"Source organization (e.g., 'myOrganization')." name:"src-org" required:""`
-	SrcProj     string `help:"Source project (e.g. 'myProject').," name:"src-proj" required:""`
+	SrcProj     string `help:"Source project (e.g. 'myProject').," name:"src-proj"`
 	SrcTokn     string `help:"Source Personal Access Token (PAT)." name:"src-tokn" env:"AZMIG_SRC_TOKEN"`
 	Repo     		string `help:"Source project repo(s). To migrate all, type 'MIGRATEALL'. To rename a repo -> (e.g., 'original:custom')" name:"repo" short:"r"`
 	TrgtPlat    string `help:"Target platform" name:"trgt-plat" default:"azure" enum:"azure, github, gitlab"`
 	TrgtOrg     string `help:"Target organization. Defaults to source organization if empty" name:"trgt-org"`
-	TrgtProj    string `help:"Target project" name:"trgt-proj" required:""`
+	TrgtProj    string `help:"Target project" name:"trgt-proj"`
 	TrgtTokn    string `help:"Target Personal Access Token (PAT). Defaults to source token if empty." name:"trgt-tokn"`
 	Wiki        bool   `help:"Migrates the wiki." optional:"" short:"w"`
 	Boards      bool   `help:"Migrates the boards and work items. AzuretoAzure only." optional:"" short:"b"`
@@ -182,6 +182,14 @@ func (r *RunC) Run(cli *CLI) error {
 		fmt.Printf("[INFO] Target organization not given, assuming source organization.\n")
 		r.TrgtOrg = r.SrcOrg
 	}
+
+	// Validate source and target project if Azure is used
+    	if strings.ToLower(r.SrcPlat) == "azure" && r.SrcProj == "" {
+        	return fmt.Errorf("--src-proj is required when source platform is azure")
+    	}
+    	if strings.ToLower(r.TrgtPlat) == "azure" && r.TrgtProj == "" {
+        	return fmt.Errorf("--trgt-proj is required when target platform is azure")
+    	}
 
 	if (r.Boards || r.TypeMapping != "") && (r.SrcPlat != "azure" || r.TrgtPlat != "azure") {
 		return fmt.Errorf("boards migration (--boards) and type mapping (--type-mapping) are currently only supported for azure-to-azure migrations")
