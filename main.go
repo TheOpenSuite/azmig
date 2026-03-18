@@ -449,7 +449,7 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 type ListC struct {
 	Plat  				 	 string `help:"Platform name." name:"plat" default:"azure" enum:"azure, github, gitlab"`
 	Org   				 	 string `help:"Organization name." name:"org" required:""`
-	Proj  				 	 string `help:"Project name." name:"proj" required:""`
+	Proj  				 	 string `help:"Project name." name:"proj"`
 	Tokn  				 	 string `help:"The Personal Access Token (PAT)." name:"tokn" env:"AZMIG_SRC_TOKEN" required:""`
 	MappingReference bool		`help:"Shows the work items mapping reference as an extra." short:"e"`
 }
