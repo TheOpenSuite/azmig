@@ -19,16 +19,13 @@ builds:
       - -s -w -X main.Version={{.Version}}
 
 archives:
-  - format: tar.gz
+  - formats: ["tar.gz"]
     format_overrides:
       - goos: windows
-        format: zip
-
-checksum:
-  name_template: 'checksums.txt'
+        formats: ["zip"]
 
 snapshot:
-  name_template: "{{ incpatch .Version }}-next"
+  version_template: "{{ incpatch .Version }}-next" 
 
 changelog:
   sort: asc
