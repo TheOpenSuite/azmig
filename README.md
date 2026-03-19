@@ -29,16 +29,27 @@ You only need to download what you need and not every tool.
 
 ---
 ## Installation
-
 **Option 1**
+Go to Releases tab and download the `.tar.gz` or `.zip` archive matching your OS.
+Extract:
 ```bash
-go build -o azmig .
-mv azmig /usr/local/bin/ # Or add to your PATH
+tar -xvf azmig_latest_linux_amd64.tar.gz
+sudo mv azmig /usr/local/bin/
 ```
 
-Option 2:
+**Option 2**
+If GO is installed:
 ```bash
-go run ./main.go ./boards_migrator.go [command]
+go install github.com/TheOpenSuite/azmig@latest
+```
+
+**Option 3**
+Build from source:
+```bash
+git clone https://github.com/TheOpenSuite/azmig.git
+cd azmig
+go build -o azmig .
+mv azmig /usr/local/bin/
 ```
 
 ---
