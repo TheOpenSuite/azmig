@@ -30,8 +30,34 @@ You only need to download what you need and not every tool.
 ---
 ## Installation
 **Option 1**
-Go to Releases tab and download the `.tar.gz` or `.zip` archive matching your OS.
-Extract:
+1. Download:
+> **Note**: To use arm64 arch, simply change it in the url from amd64 to arm64
+
+Linux:
+```bash
+curl -L -o azmig.tar.gz "$(curl -s https://api.github.com/repos/TheOpenSuite/azmig/releases/latest \
+  | grep 'browser_download_url' \
+  | grep 'linux_amd64' \
+  | cut -d '"' -f 4)"
+```
+
+Mac:
+```bash
+curl -L -o azmig.tar.gz "$(curl -s https://api.github.com/repos/TheOpenSuite/azmig/releases/latest \
+  | grep 'browser_download_url' \
+  | grep 'darwin_amd64' \
+  | cut -d '"' -f 4)"
+```
+
+Windows:
+```bash
+curl -L -o azmig.tar.gz "$(curl -s https://api.github.com/repos/TheOpenSuite/azmig/releases/latest \
+  | grep 'browser_download_url' \
+  | grep 'windows_amd64' \
+  | cut -d '"' -f 4)"
+```
+
+2. Extract:
 ```bash
 tar -xvf azmig_latest_linux_amd64.tar.gz
 sudo mv azmig /usr/local/bin/
