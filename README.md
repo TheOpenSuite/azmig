@@ -108,7 +108,7 @@ For example: The src and trgt platform are defaulted to azure, and if trgt-tokn 
 * **Rename a Repo**: `--repo "old-name:new-name"`
 * **Migrate All**: `--repo "MIGRATEALL"`
 * **Include Wikis**: Add the `--wiki` or `-w` flag.
-* **Include Boards**: Add `--boards` (Azure to Azure only).
+* **Include Boards**: Add `--boards` (Azure to Azure only). Can have custom mapping "Issue:Backlog" or partially automated mapping "agile:agile"
 
 ---
 ## Configuration & Automation
