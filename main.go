@@ -9,16 +9,199 @@ import (
 	"os/exec"
 	"path/filepath"
 	"strings"
-	"time"
 	"text/tabwriter"
+	"time"
 
 	"github.com/alecthomas/kong"
 )
 
 var Version = "0.0.0-src"
 
+var processWorkItems = map[string][]string{
+	"basic": {"Epic", "Issue", "Task"},
+	"agile": {"Epic", "Feature", "User Story", "Task", "Bug", "Issue", "Test Case", "Test Plan", "Test Suite", "Shared Step", "Shared Parameter"},
+	"scrum": {"Epic", "Feature", "Product Backlog Item", "Task", "Bug", "Impediment", "Test Case", "Test Plan", "Test Suite", "Shared Step", "Shared Parameter"},
+	"cmmi":  {"Epic", "Feature", "Requirement", "Task", "Bug", "Issue", "Review", "Risk", "Change Request", "Test Case", "Test Plan", "Test Suite", "Shared Step", "Shared Parameter"},
+}
+
+var processMappingRules = map[string]map[string]string{
+	"agile:scrum": {
+		"User Story": "Product Backlog Item",
+		"Issue":      "Impediment",
+		"Epic":       "Epic",
+		"Feature":    "Feature",
+		"Task":       "Task",
+		"Bug":        "Bug",
+		"Test Case":  "Test Case",
+		"Test Plan":  "Test Plan",
+		"Test Suite": "Test Suite",
+	},
+	"scrum:agile": {
+		"Product Backlog Item": "User Story",
+		"Impediment":           "Issue",
+		"Epic":                 "Epic",
+		"Feature":              "Feature",
+		"Task":                 "Task",
+		"Bug":                  "Bug",
+		"Test Case":            "Test Case",
+		"Test Plan":            "Test Plan",
+		"Test Suite":           "Test Suite",
+	},
+	"agile:basic": {
+		"User Story": "Issue",
+		"Epic":       "Epic",
+		"Task":       "Task",
+		"Bug":        "Issue",
+	},
+	"scrum:basic": {
+		"Product Backlog Item": "Issue",
+		"Epic":                 "Epic",
+		"Task":                 "Task",
+		"Bug":                  "Issue",
+	},
+	"basic:agile": {
+		"Issue": "User Story",
+		"Epic":  "Epic",
+		"Task":  "Task",
+	},
+	"basic:scrum": {
+		"Issue": "Product Backlog Item",
+		"Epic":  "Epic",
+		"Task":  "Task",
+	},
+	"agile:cmmi": {
+		"User Story": "Requirement",
+		"Issue":      "Issue",
+		"Epic":       "Epic",
+		"Feature":    "Feature",
+		"Task":       "Task",
+		"Bug":        "Bug",
+	},
+	"scrum:cmmi": {
+		"Product Backlog Item": "Requirement",
+		"Impediment":           "Issue",
+		"Epic":                 "Epic",
+		"Feature":              "Feature",
+		"Task":                 "Task",
+		"Bug":                  "Bug",
+	},
+	"cmmi:agile": {
+		"Requirement": "User Story",
+		"Issue":       "Issue",
+		"Epic":        "Epic",
+		"Feature":     "Feature",
+		"Task":        "Task",
+		"Bug":         "Bug",
+	},
+	"cmmi:scrum": {
+		"Requirement": "Product Backlog Item",
+		"Issue":       "Impediment",
+		"Epic":        "Epic",
+		"Feature":     "Feature",
+		"Task":        "Task",
+		"Bug":         "Bug",
+	},
+}
+
+func resolveTypeMapping(raw string) (string, error) {
+	if raw == "" {
+		return "", nil
+	}
+
+	trimmed := strings.TrimSpace(raw)
+	if !strings.Contains(trimmed, ",") && strings.Count(trimmed, ":") == 1 {
+		kv := strings.SplitN(trimmed, ":", 2)
+		srcProc := strings.ToLower(strings.TrimSpace(kv[0]))
+		trgtProc := strings.ToLower(strings.TrimSpace(kv[1]))
+		_, srcKnown := processWorkItems[srcProc]
+		_, trgtKnown := processWorkItems[trgtProc]
+
+		if srcKnown && trgtKnown {
+			if srcProc == trgtProc {
+				fmt.Printf("[INFO] Source and target process are both '%s'. No type mapping is necessary — work items match 1:1.\n", srcProc)
+				return "", nil
+			}
+
+			pairKey := srcProc + ":" + trgtProc
+			rules, ok := processMappingRules[pairKey]
+			if !ok {
+				return "", fmt.Errorf("no built-in mapping defined for '%s' → '%s'. Please provide an explicit --type-mapping (e.g., 'User Story:Product Backlog Item,Bug:Bug')", srcProc, trgtProc)
+			}
+
+			var pairs []string
+			for src, trgt := range rules {
+				pairs = append(pairs, fmt.Sprintf("%s:%s", src, trgt))
+			}
+			expanded := strings.Join(pairs, ",")
+
+			fmt.Printf("\n[AUTO-MAPPING] Detected process template change: %s → %s\n", strings.ToUpper(srcProc), strings.ToUpper(trgtProc))
+			fmt.Println("The following work item type mappings will be applied:")
+			w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+			fmt.Fprintln(w, "  SOURCE\tTARGET")
+			fmt.Fprintln(w, "  ------\t------")
+			for src, trgt := range rules {
+				fmt.Fprintf(w, "  %s\t→  %s\n", src, trgt)
+			}
+			w.Flush()
+			fmt.Print("\nProceed with this mapping? (y/n): ")
+			var confirm string
+			fmt.Scanln(&confirm)
+			if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+				return "", fmt.Errorf("type mapping rejected by user")
+			}
+			return expanded, nil
+		}
+	}
+
+	return raw, nil
+}
+
+// getAllSourceRepos fetches the list of repository names from the source platform.
+func getAllSourceRepos(r *RunC, cli *CLI) ([]string, error) {
+	var cmd *exec.Cmd
+	switch strings.ToLower(r.SrcPlat) {
+	case "azure":
+		vsrcorg := fmt.Sprintf("https://dev.azure.com/%s", r.SrcOrg)
+		os.Setenv("AZURE_DEVOPS_EXT_PAT", r.SrcTokn)
+		if cli.Verbose {
+			fmt.Printf("[DEBUG] Listing Azure repos for project: %s in org: %s\n", r.SrcProj, vsrcorg)
+		}
+		cmd = exec.Command("az", "repos", "list", "--project", r.SrcProj, "--org", vsrcorg, "--output", "json", "--query", "[].name")
+	case "github":
+		os.Setenv("GH_TOKEN", r.SrcTokn)
+		if cli.Verbose {
+			fmt.Printf("[DEBUG] Listing GitHub repos for org: %s\n", r.SrcOrg)
+		}
+		cmd = exec.Command("gh", "repo", "list", r.SrcOrg, "--limit", "1000", "--json", "name", "--jq", ".[].name")
+	case "gitlab":
+		os.Setenv("GITLAB_TOKEN", r.SrcTokn)
+		if cli.Verbose {
+			fmt.Printf("[DEBUG] Listing GitLab repos for org: %s\n", r.SrcOrg)
+		}
+		cmd = exec.Command("glab", "repo", "list", "-P", r.SrcOrg, "--output", "json", "--query", "[].name")
+	default:
+		return nil, fmt.Errorf("unsupported source platform: %s", r.SrcPlat)
+	}
+
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		return nil, fmt.Errorf("failed to list source repos: %w\nOutput: %s", err, string(output))
+	}
+
+	var repos []string
+	if err := json.Unmarshal(output, &repos); err != nil {
+		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
+		for _, l := range lines {
+			if strings.TrimSpace(l) != "" {
+				repos = append(repos, strings.TrimSpace(l))
+			}
+		}
+	}
+	return repos, nil
+}
+
 type CLI struct {
-	Verbose bool `help:"Show extra info." short:"V"`
+	Verbose bool             `help:"Show extra info." short:"V"`
 	Version kong.VersionFlag `help:"Shows the current version." short:"v"`
 
 	// Our Ghost Router
@@ -67,7 +250,7 @@ func (d *DefaultHandler) Run(cli *CLI) error {
 	return nil
 }
 
-// Commands 
+// Commands
 
 // Normal flags router for all commands
 func (c *CLI) BeforeRun() error {
@@ -120,7 +303,7 @@ type RunC struct {
 	SrcOrg      string `help:"Source organization (e.g., 'myOrganization')." name:"src-org" required:""`
 	SrcProj     string `help:"Source project (e.g. 'myProject').," name:"src-proj"`
 	SrcTokn     string `help:"Source Personal Access Token (PAT)." name:"src-tokn" env:"AZMIG_SRC_TOKEN"`
-	Repo     		string `help:"Source project repo(s). To migrate all, type 'MIGRATEALL'. To rename a repo -> (e.g., 'original:custom')" name:"repo" short:"r"`
+	Repo        string `help:"Source project repo(s). To migrate all, type 'MIGRATEALL'. To rename a repo -> (e.g., 'original:custom')" name:"repo" short:"r"`
 	TrgtPlat    string `help:"Target platform" name:"trgt-plat" default:"azure" enum:"azure, github, gitlab"`
 	TrgtOrg     string `help:"Target organization. Defaults to source organization if empty" name:"trgt-org"`
 	TrgtProj    string `help:"Target project" name:"trgt-proj"`
@@ -128,36 +311,10 @@ type RunC struct {
 	Wiki        bool   `help:"Migrates the wiki." optional:"" short:"w"`
 	Boards      bool   `help:"Migrates the boards and work items. AzuretoAzure only." optional:"" short:"b"`
 	TypeMapping string `help:"Work item type mapping (e.g., 'Task:Task,Bug:Issue')." name:"type-mapping" short:"m"`
-	Config			bool   `help:"Saves flags to a JSON file named after the target project. Can be used to save your config or run multiple configs at once." short:"c" optional:""`
+	Config      bool   `help:"Saves flags to a JSON file named after the target project. Can be used to save your config or run multiple configs at once." short:"c" optional:""`
 }
 
 func (r *RunC) Run(cli *CLI) error {
-	
-	if r.Config {
-      safeName := strings.ReplaceAll(strings.ToLower(r.TrgtProj), " ", "-")
-      if safeName == "" {
-          return fmt.Errorf("target project name is required to create a config file")
-      }
-      os.MkdirAll("config", 0755)
-      fileName := fmt.Sprintf("config/%s.json", safeName)
-
-      if _, err := os.Stat(fileName); err == nil {
-          fmt.Printf("Config file '%s' already exists. Overwrite? (y/n): ", fileName)
-          var confirm string
-          fmt.Scanln(&confirm)
-          if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
-              fmt.Println("Save aborted.")
-              return nil
-          }
-      }
-
-      jsonData, _ := json.MarshalIndent(r, "", "  ")
-      if err := os.WriteFile(fileName, jsonData, 0644); err != nil {
-          return fmt.Errorf("failed to save config: %w", err)
-      }
-			fmt.Printf("Config saved to %s. To start it, either remove the config flag or with the command: 'azmig load %s'\n", fileName, safeName)
-      return nil
-  }
 
 	if r.SrcTokn == "" {
 		if r.SrcPlat == "azure" {
@@ -177,28 +334,70 @@ func (r *RunC) Run(cli *CLI) error {
 		fmt.Printf("[INFO] Target token not given, assuming source token as target token.\n")
 		r.TrgtTokn = r.SrcTokn
 	}
-	
+
 	if r.TrgtOrg == "" {
 		fmt.Printf("[INFO] Target organization not given, assuming source organization.\n")
 		r.TrgtOrg = r.SrcOrg
 	}
 
 	// Validate source and target project if Azure is used
-    	if strings.ToLower(r.SrcPlat) == "azure" && r.SrcProj == "" {
-        	return fmt.Errorf("--src-proj is required when source platform is azure")
-    	}
-    	if strings.ToLower(r.TrgtPlat) == "azure" && r.TrgtProj == "" {
-        	return fmt.Errorf("--trgt-proj is required when target platform is azure")
-    	}
+	if strings.ToLower(r.SrcPlat) == "azure" && r.SrcProj == "" {
+		return fmt.Errorf("--src-proj is required when source platform is azure")
+	}
+	if strings.ToLower(r.TrgtPlat) == "azure" && r.TrgtProj == "" {
+		return fmt.Errorf("--trgt-proj is required when target platform is azure")
+	}
 
 	if (r.Boards || r.TypeMapping != "") && (r.SrcPlat != "azure" || r.TrgtPlat != "azure") {
 		return fmt.Errorf("boards migration (--boards) and type mapping (--type-mapping) are currently only supported for azure-to-azure migrations")
 	}
 
+	if r.Config {
+		safeName := strings.ReplaceAll(strings.ToLower(r.TrgtProj), " ", "-")
+		if safeName == "" {
+			return fmt.Errorf("target project name is required to create a config file")
+		}
+		os.MkdirAll("config", 0755)
+		fileName := fmt.Sprintf("config/%s.json", safeName)
+
+		if _, err := os.Stat(fileName); err == nil {
+			fmt.Printf("Config file '%s' already exists. Overwrite? (y/n): ", fileName)
+			var confirm string
+			fmt.Scanln(&confirm)
+			if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
+				fmt.Println("Save aborted.")
+				return nil
+			}
+		}
+
+		if strings.ToUpper(strings.TrimSpace(r.Repo)) == "MIGRATEALL" {
+			fmt.Println("[INFO] MIGRATEALL detected — fetching repository list from source to embed in config...")
+			repos, err := getAllSourceRepos(r, cli)
+			if err != nil {
+				return fmt.Errorf("could not fetch repos for MIGRATEALL expansion: %w", err)
+			}
+			r.Repo = strings.Join(repos, ",")
+			fmt.Printf("[INFO] Resolved %d repositories: %s\n", len(repos), r.Repo)
+		}
+
+		jsonData, _ := json.MarshalIndent(r, "", "  ")
+		if err := os.WriteFile(fileName, jsonData, 0644); err != nil {
+			return fmt.Errorf("failed to save config: %w", err)
+		}
+		fmt.Printf("Config saved to %s. To start it, either remove the config flag or with the command: 'azmig load %s'\n", fileName, safeName)
+		return nil
+	}
+
+	// Resolve process-level type mapping (e.g. "agile:scrum") before migrating.
+	resolved, err := resolveTypeMapping(r.TypeMapping)
+	if err != nil {
+		return err
+	}
+	r.TypeMapping = resolved
+
 	if err := r.migrateRepo(cli); err != nil {
 		return err
 	}
-
 
 	return nil
 }
@@ -209,117 +408,82 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 	folderID := r1.Intn(90000) // Random number generator for the tmp folder
 	baseTempDir := os.TempDir()
 
-	// Different sources and their commands logic
-	var cmd *exec.Cmd
-	switch strings.ToLower(r.SrcPlat) {
-	case "azure":
-		vsrcorg := fmt.Sprintf("https://dev.azure.com/%s", r.SrcOrg)
-		os.Setenv("AZURE_DEVOPS_EXT_PAT", r.SrcTokn)
-		if cli.Verbose {
-            fmt.Printf("[DEBUG] Listing Azure repos for project: %s in org: %s\n", r.SrcProj, vsrcorg)
-      }
-		cmd = exec.Command("az", "repos", "list", "--project", r.SrcProj, "--org", vsrcorg, "--output", "json", "--query", "[].name")
-	case "github":
-		os.Setenv("GH_TOKEN", r.SrcTokn)
-		if cli.Verbose {
-            fmt.Printf("[DEBUG] Listing GitHub repos for org: %s\n", r.SrcOrg)
-      }
-		cmd = exec.Command("gh", "repo", "list", r.SrcOrg, "--limit", "1000", "--json", "name", "--jq", ".[].name")
-	case "gitlab":
-		os.Setenv("GITLAB_TOKEN", r.SrcTokn)
-		if cli.Verbose {
-            fmt.Printf("[DEBUG] Listing GitHub repos for org: %s\n", r.SrcOrg)
-      }
-		cmd = exec.Command("glab", "repo", "list", "-P", r.SrcOrg, "--output", "json", "--query", "[].name")
-	}
-
-	output, err := cmd.CombinedOutput()
+	// Fetch the full source repo list (used for MIGRATEALL and plan display)
+	allSourceRepos, err := getAllSourceRepos(r, cli)
 	if err != nil {
-		return fmt.Errorf("failed to list source repos: %w\nOutput: %s", err, string(output))
+		return err
 	}
+	var output []byte
 
-	var allSourceRepos []string
-	if err := json.Unmarshal(output, &allSourceRepos); err != nil {
-		lines := strings.Split(strings.TrimSpace(string(output)), "\n")
-		for _, l := range lines {
-			if strings.TrimSpace(l) != "" {
-				allSourceRepos = append(allSourceRepos, strings.TrimSpace(l))
+	var reposToMigrate []string
+	if r.Repo == "MIGRATEALL" {
+		reposToMigrate = allSourceRepos
+	} else {
+		parts := strings.Split(r.Repo, ",")
+		for _, p := range parts {
+			clean := strings.Trim(strings.TrimSpace(p), "'\"")
+			if clean != "" {
+				reposToMigrate = append(reposToMigrate, clean)
 			}
 		}
 	}
 
+	fmt.Println("\nMigration Plan:")
+	for i, entry := range reposToMigrate {
+		src, trgt := entry, entry
+		if strings.Contains(entry, ":") {
+			kv := strings.SplitN(entry, ":", 2)
+			src = strings.TrimSpace(kv[0])
+			trgt = strings.TrimSpace(kv[1])
+		}
 
-	var reposToMigrate []string
-    if r.Repo == "MIGRATEALL" {
-        reposToMigrate = allSourceRepos
-    } else {
-        parts := strings.Split(r.Repo, ",")
-        for _, p := range parts {
-            clean := strings.Trim(strings.TrimSpace(p), "'\"")
-            if clean != "" {
-                reposToMigrate = append(reposToMigrate, clean)
-            }
-        }
-    }
-
-    fmt.Println("\nMigration Plan:")
-    for i, entry := range reposToMigrate {
-        src, trgt := entry, entry
-        if strings.Contains(entry, ":") {
-            kv := strings.SplitN(entry, ":", 2)
-            src = strings.TrimSpace(kv[0])
-            trgt = strings.TrimSpace(kv[1])
-        }
-
-        status := ""
-        if src != trgt {
-            status = " (RENAME)"
-        }
-        fmt.Printf("[%d] %s -> %s%s\n", i, src, trgt, status)
-    }
-
+		status := ""
+		if src != trgt {
+			status = " (RENAME)"
+		}
+		fmt.Printf("[%d] %s -> %s%s\n", i, src, trgt, status)
+	}
 
 	fmt.Print("\nProceed with migration? (y/n): ")
 	var confirm string
 	fmt.Scanln(&confirm)
 	if strings.ToLower(strings.TrimSpace(confirm)) != "y" {
-	    return fmt.Errorf("migration aborted by user")
+		return fmt.Errorf("migration aborted by user")
 	}
 
 	// Migration loop
 	for _, entry := range reposToMigrate {
-      srcBase, trgtBase := entry, entry
-      if strings.Contains(entry, ":") {
-          kv := strings.SplitN(entry, ":", 2)
-          srcBase = strings.TrimSpace(kv[0])
-          trgtBase = strings.TrimSpace(kv[1])
-      }
+		srcBase, trgtBase := entry, entry
+		if strings.Contains(entry, ":") {
+			kv := strings.SplitN(entry, ":", 2)
+			srcBase = strings.TrimSpace(kv[0])
+			trgtBase = strings.TrimSpace(kv[1])
+		}
 
-      suffixes := []string{""}
-      if r.Wiki {
-          suffixes = append(suffixes, "WIKI_MARKER")
-      }
+		suffixes := []string{""}
+		if r.Wiki {
+			suffixes = append(suffixes, "WIKI_MARKER")
+		}
 
-      for _, suffixMarker := range suffixes {
-          var srcName, trgtName string
+		for _, suffixMarker := range suffixes {
+			var srcName, trgtName string
 
-          if suffixMarker == "WIKI_MARKER" {
-              if strings.ToLower(r.SrcPlat) == "azure" {
-                  srcName = srcBase + ".wiki"
-              } else {
-                  srcName = srcBase + ".wiki.git"
-              }
+			if suffixMarker == "WIKI_MARKER" {
+				if strings.ToLower(r.SrcPlat) == "azure" {
+					srcName = srcBase + ".wiki"
+				} else {
+					srcName = srcBase + ".wiki.git"
+				}
 
-              if strings.ToLower(r.TrgtPlat) == "azure" {
-                  trgtName = trgtBase + ".wiki"
-              } else {
-                  trgtName = trgtBase + ".wiki.git"
-              }
-          } else {
-              srcName = srcBase
-              trgtName = trgtBase
-          }	
-	
+				if strings.ToLower(r.TrgtPlat) == "azure" {
+					trgtName = trgtBase + ".wiki"
+				} else {
+					trgtName = trgtBase + ".wiki.git"
+				}
+			} else {
+				srcName = srcBase
+				trgtName = trgtBase
+			}
 
 			var checkCmd, createCmd *exec.Cmd
 			var srcurl, trgturl string
@@ -359,10 +523,10 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 			folderID++
 
 			if cli.Verbose {
-          fmt.Printf("[DEBUG] Source URL: %s\n", strings.ReplaceAll(srcurl, r.SrcTokn, "********"))
-          fmt.Printf("[DEBUG] Target URL: %s\n", strings.ReplaceAll(trgturl, r.TrgtTokn, "********"))
-          fmt.Printf("[DEBUG] Using temp folder: %s\n", tmpFolder)
-        }
+				fmt.Printf("[DEBUG] Source URL: %s\n", strings.ReplaceAll(srcurl, r.SrcTokn, "********"))
+				fmt.Printf("[DEBUG] Target URL: %s\n", strings.ReplaceAll(trgturl, r.TrgtTokn, "********"))
+				fmt.Printf("[DEBUG] Using temp folder: %s\n", tmpFolder)
+			}
 
 			// Check if it exists, if not, then create
 			if err := checkCmd.Run(); err == nil {
@@ -400,19 +564,18 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 				return fmt.Errorf("failed to clone %s: %w", srcName, err)
 			}
 
-
 			// Push branches
 			pushBranches := exec.Command("git", "push", trgturl, "--all")
 			pushBranches.Dir = tmpFolder
 			output, err = pushBranches.CombinedOutput()
 
 			if cli.Verbose && len(output) > 0 {
-    			fmt.Printf("[DEBUG] Git Push (Branches) Output:\n%s\n", string(output))
+				fmt.Printf("[DEBUG] Git Push (Branches) Output:\n%s\n", string(output))
 			}
 
 			if err != nil {
-    			os.RemoveAll(tmpFolder)
-    			return fmt.Errorf("failed to push branches for %s: %w\nDetails: %s", trgtName, err, string(output))
+				os.RemoveAll(tmpFolder)
+				return fmt.Errorf("failed to push branches for %s: %w\nDetails: %s", trgtName, err, string(output))
 			}
 
 			// push tags
@@ -421,12 +584,12 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 			output, err = pushTags.CombinedOutput()
 
 			if cli.Verbose && len(output) > 0 {
-    			fmt.Printf("[DEBUG] Git Push (Tags) Output:\n%s\n", string(output))
+				fmt.Printf("[DEBUG] Git Push (Tags) Output:\n%s\n", string(output))
 			}
 
 			if err != nil {
-    			os.RemoveAll(tmpFolder)
-    			return fmt.Errorf("failed to push tags for %s: %w\nDetails: %s", trgtName, err, string(output))
+				os.RemoveAll(tmpFolder)
+				return fmt.Errorf("failed to push tags for %s: %w\nDetails: %s", trgtName, err, string(output))
 			}
 
 			if cli.Verbose {
@@ -447,91 +610,91 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 }
 
 type ListC struct {
-	Plat  				 	 string `help:"Platform name." name:"plat" default:"azure" enum:"azure, github, gitlab"`
-	Org   				 	 string `help:"Organization name." name:"org" required:""`
-	Proj  				 	 string `help:"Project name." name:"proj"`
-	Tokn  				 	 string `help:"The Personal Access Token (PAT)." name:"tokn" env:"AZMIG_SRC_TOKEN" required:""`
-	MappingReference bool		`help:"Shows the work items mapping reference as an extra." short:"e"`
+	Plat             string `help:"Platform name." name:"plat" default:"azure" enum:"azure, github, gitlab"`
+	Org              string `help:"Organization name." name:"org" required:""`
+	Proj             string `help:"Project name." name:"proj"`
+	Tokn             string `help:"The Personal Access Token (PAT)." name:"tokn" env:"AZMIG_SRC_TOKEN" required:""`
+	MappingReference bool   `help:"Shows the work items mapping reference as an extra." short:"e"`
 }
 
 func (r *ListC) Run(cli *CLI) error {
-    switch strings.ToLower(r.Plat) {
-    case "azure":
-        vsrcorg := fmt.Sprintf("https://dev.azure.com/%s", r.Org)
-        os.Setenv("AZURE_DEVOPS_EXT_PAT", r.Tokn)
-        cmd := exec.Command("az", "repos", "list", "--project", r.Proj, "--org", vsrcorg, "--output", "json", "--query", "[].name")
-        runAndPrint(cmd, "Azure DevOps")
+	switch strings.ToLower(r.Plat) {
+	case "azure":
+		vsrcorg := fmt.Sprintf("https://dev.azure.com/%s", r.Org)
+		os.Setenv("AZURE_DEVOPS_EXT_PAT", r.Tokn)
+		cmd := exec.Command("az", "repos", "list", "--project", r.Proj, "--org", vsrcorg, "--output", "json", "--query", "[].name")
+		runAndPrint(cmd, "Azure DevOps")
 
-    case "github":
-        os.Setenv("GITHUB_TOKEN", r.Tokn)
-        cmd := exec.Command("gh", "repo", "list", r.Org, "--json", "name", "--jq", "[].name")
-        runAndPrint(cmd, "GitHub")
+	case "github":
+		os.Setenv("GITHUB_TOKEN", r.Tokn)
+		cmd := exec.Command("gh", "repo", "list", r.Org, "--json", "name", "--jq", "[].name")
+		runAndPrint(cmd, "GitHub")
 
-    case "gitlab":
-        os.Setenv("GITLAB_TOKEN", r.Tokn)
-        cmd := exec.Command("glab", "repo", "list", "-G", r.Org, "--output", "json")
-        runAndPrint(cmd, "GitLab")
+	case "gitlab":
+		os.Setenv("GITLAB_TOKEN", r.Tokn)
+		cmd := exec.Command("glab", "repo", "list", "-G", r.Org, "--output", "json")
+		runAndPrint(cmd, "GitLab")
 
-    default:
-        return fmt.Errorf("unsupported platform: %s", r.Plat)
-    }
-		if r.MappingReference {
-    	PrintProcessMappingTable()
-		}
+	default:
+		return fmt.Errorf("unsupported platform: %s", r.Plat)
+	}
+	if r.MappingReference {
+		PrintProcessMappingTable()
+	}
 
-    return nil
+	return nil
 }
 
 func runAndPrint(cmd *exec.Cmd, platform string) {
-    output, err := cmd.CombinedOutput()
-    if err != nil {
-        fmt.Printf("Error fetching %s repos: %v\nOutput: %s\n", platform, err, string(output))
-        return
-    }
-    fmt.Printf("\n%s Repositories\n", platform)
-    fmt.Println(string(output))
+	output, err := cmd.CombinedOutput()
+	if err != nil {
+		fmt.Printf("Error fetching %s repos: %v\nOutput: %s\n", platform, err, string(output))
+		return
+	}
+	fmt.Printf("\n%s Repositories\n", platform)
+	fmt.Println(string(output))
 }
 
 // renders the mapping table
 func PrintProcessMappingTable() {
-    w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
+	w := tabwriter.NewWriter(os.Stdout, 0, 0, 3, ' ', 0)
 
-    fmt.Println("\nAZURE DEVOPS PROCESS REFERENCE")
-    fmt.Println(strings.Repeat("-", 80))
+	fmt.Println("\nAZURE DEVOPS PROCESS REFERENCE")
+	fmt.Println(strings.Repeat("-", 80))
 
-    // Header
-    fmt.Fprintln(w, "HIERARCHY\tBASIC\tAGILE\tSCRUM\tCMMI")
-    fmt.Fprintln(w, "---------\t-----\t-----\t-----\t----")
+	// Header
+	fmt.Fprintln(w, "HIERARCHY\tBASIC\tAGILE\tSCRUM\tCMMI")
+	fmt.Fprintln(w, "---------\t-----\t-----\t-----\t----")
 
-    // Portfolio levels
-    fmt.Fprintln(w, "Portfolio\tEpic\tEpic\tEpic\tEpic")
-    fmt.Fprintln(w, "Portfolio\t-\tFeature\tFeature\tFeature")
+	// Portfolio levels
+	fmt.Fprintln(w, "Portfolio\tEpic\tEpic\tEpic\tEpic")
+	fmt.Fprintln(w, "Portfolio\t-\tFeature\tFeature\tFeature")
 
-    // Backlog level
-    fmt.Fprintln(w, "Backlog\tIssue\tUser Story\tProduct Backlog Item\tRequirement")
+	// Backlog level
+	fmt.Fprintln(w, "Backlog\tIssue\tUser Story\tProduct Backlog Item\tRequirement")
 
-    // Iteration level
-    fmt.Fprintln(w, "Work\tTask\tTask\tTask\tTask")
+	// Iteration level
+	fmt.Fprintln(w, "Work\tTask\tTask\tTask\tTask")
 
-    // Tracking & management
-    fmt.Fprintln(w, "Tracking\t-\tIssue\tImpediment\tIssue")
-    fmt.Fprintln(w, "Project Mgmt\t-\t-\t-\tReview")
-    fmt.Fprintln(w, "Project Mgmt\t-\t-\t-\tRisk")
-    fmt.Fprintln(w, "Changes\t-\t-\t-\tChange Request")
+	// Tracking & management
+	fmt.Fprintln(w, "Tracking\t-\tIssue\tImpediment\tIssue")
+	fmt.Fprintln(w, "Project Mgmt\t-\t-\t-\tReview")
+	fmt.Fprintln(w, "Project Mgmt\t-\t-\t-\tRisk")
+	fmt.Fprintln(w, "Changes\t-\t-\t-\tChange Request")
 
-    // Defects & quality
-    fmt.Fprintln(w, "Defect\t-\tBug\tBug\tBug")
-    fmt.Fprintln(w, "Testing\tTest Case\tTest Case\tTest Case\tTest Case")
-    fmt.Fprintln(w, "Testing\tTest Plan\tTest Plan\tTest Plan\tTest Plan")
-    fmt.Fprintln(w, "Testing\tTest Suite\tTest Suite\tTest Suite\tTest Suite")
+	// Defects & quality
+	fmt.Fprintln(w, "Defect\t-\tBug\tBug\tBug")
+	fmt.Fprintln(w, "Testing\tTest Case\tTest Case\tTest Case\tTest Case")
+	fmt.Fprintln(w, "Testing\tTest Plan\tTest Plan\tTest Plan\tTest Plan")
+	fmt.Fprintln(w, "Testing\tTest Suite\tTest Suite\tTest Suite\tTest Suite")
 
-    // Shared ssets
-    fmt.Fprintln(w, "Assets\tShared Step\tShared Step\tShared Step\tShared Step")
-    fmt.Fprintln(w, "Assets\tShared Param\tShared Param\tShared Param\tShared Param")
+	// Shared ssets
+	fmt.Fprintln(w, "Assets\tShared Step\tShared Step\tShared Step\tShared Step")
+	fmt.Fprintln(w, "Assets\tShared Param\tShared Param\tShared Param\tShared Param")
 
-    w.Flush()
-    fmt.Println(strings.Repeat("-", 80))
-		fmt.Println("Note: This mapping reference may change or not be 100% accurate.\n")
+	w.Flush()
+	fmt.Println(strings.Repeat("-", 80))
+	fmt.Println("Note: This mapping reference may change or not be 100% accurate.\n")
 }
 
 type LoadC struct {
@@ -540,43 +703,43 @@ type LoadC struct {
 
 func (l *LoadC) Run(cli *CLI) error {
 
-		for _, file := range l.Files {
-        cleanName := strings.TrimSuffix(strings.ToLower(file), ".json")
-        filePath := filepath.Join("config", cleanName+".json")
+	for _, file := range l.Files {
+		cleanName := strings.TrimSuffix(strings.ToLower(file), ".json")
+		filePath := filepath.Join("config", cleanName+".json")
 
-        if _, err := os.Stat(filePath); os.IsNotExist(err) {
-            return fmt.Errorf("Config file '%s' not found in config/ folder", cleanName)
-        }
-    }
-		
-		for _, file := range l.Files {
-			// Strip .json if typed it, then forces it back on to allow just the config name to be entered.
-    	cleanName := strings.TrimSuffix(strings.ToLower(file), ".json")
-			fileData, _ := os.ReadFile(filepath.Join("config", cleanName+".json"))
+		if _, err := os.Stat(filePath); os.IsNotExist(err) {
+			return fmt.Errorf("Config file '%s' not found in config/ folder", cleanName)
+		}
+	}
 
-    	var r RunC
-    	if err := json.Unmarshal(fileData, &r); err != nil {
-        	return fmt.Errorf("Failed to parse config %s: %w", cleanName, err)
-    	}
+	for _, file := range l.Files {
+		// Strip .json if typed it, then forces it back on to allow just the config name to be entered.
+		cleanName := strings.TrimSuffix(strings.ToLower(file), ".json")
+		fileData, _ := os.ReadFile(filepath.Join("config", cleanName+".json"))
 
-    	r.Config = false
+		var r RunC
+		if err := json.Unmarshal(fileData, &r); err != nil {
+			return fmt.Errorf("Failed to parse config %s: %w", cleanName, err)
+		}
 
-			if err := r.Run(cli); err != nil {
-				fmt.Printf("Migration failed for %s: %v\n", file, err)
-				fmt.Print("Do you want to continue? (y/n): ")
-				var resp string
-          	fmt.Scanln(&resp)
-          	if strings.ToLower(strings.TrimSpace(resp)) != "y" {
-              	fmt.Println("Migration has been halted.")
-              	return nil
-          	}
+		r.Config = false
 
+		if err := r.Run(cli); err != nil {
+			fmt.Printf("Migration failed for %s: %v\n", file, err)
+			fmt.Print("Do you want to continue? (y/n): ")
+			var resp string
+			fmt.Scanln(&resp)
+			if strings.ToLower(strings.TrimSpace(resp)) != "y" {
+				fmt.Println("Migration has been halted.")
+				return nil
 			}
 
 		}
-    		
-		fmt.Println("\nAll migrations have finished.")
-    return nil
+
+	}
+
+	fmt.Println("\nAll migrations have finished.")
+	return nil
 
 }
 
