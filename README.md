@@ -31,7 +31,7 @@ You only need to download what you need and not every tool.
 ## Installation
 **Option 1**
 1. Download:
-> **Note**: To use arm64 arch, simply change it in the url from amd64 to arm64
+> **Note**: To use arm64 arch, simply change it from amd64 to arm64
 
 Linux:
 ```bash
@@ -51,7 +51,7 @@ curl -L -o azmig.tar.gz "$(curl -s https://api.github.com/repos/TheOpenSuite/azm
 
 Windows:
 ```bash
-curl -L -o azmig.tar.gz "$(curl -s https://api.github.com/repos/TheOpenSuite/azmig/releases/latest \
+curl -L -o azmig.zip "$(curl -s https://api.github.com/repos/TheOpenSuite/azmig/releases/latest \
   | grep 'browser_download_url' \
   | grep 'windows_amd64' \
   | cut -d '"' -f 4)"
@@ -98,7 +98,7 @@ Migrate a specific repository from GitHub to Azure DevOps:
 
 ```bash
 azmig run \
-  --src-plat github --src-org MyGithubOrg --src-proj "NotUsedInGH" \
+  --src-plat github --src-org MyGithubOrg \
   --trgt-plat azure --trgt-org MyAzureOrg --trgt-proj MyTargetProject \
   --repo "my-repo"
 ```
@@ -108,7 +108,7 @@ For example: The src and trgt platform are defaulted to azure, and if trgt-tokn 
 * **Rename a Repo**: `--repo "old-name:new-name"`
 * **Migrate All**: `--repo "MIGRATEALL"`
 * **Include Wikis**: Add the `--wiki` or `-w` flag.
-* **Include Boards**: Add `--boards` (Azure to Azure only). Can have custom mapping "Issue:Backlog" or partially automated mapping "agile:agile"
+* **Include Boards**: Add `--boards` (Azure to Azure only). Can have custom mapping "Issue:Backlog" or partially automated mapping "agile:agile". Related flags are -m for mapping and -f for the full history work items.
 
 ---
 ## Configuration & Automation
@@ -165,10 +165,18 @@ config/sample-migration.json
   "TrgtTokn": "",
   "Wiki": true,
   "Boards": false,
+  "FullHistory": false,
   "TypeMapping": "Task:Task,Bug:Issue",
   "Config": false
 }
 ```
+---
+## Example command with extra flags
+```bash
+$env:AZMIG_SRC_TOKEN="QWeRty123xxxxxxxxxxxxxxxxxxxxx"
+azmig run --src-plat "azure" --src-org "ABCSoftware" --src-proj "CABackend" -r "Repo1:Custom1, Repo2, Repo3:Custom3" --trgt-plat "azure" --trgt-org "CBASoftware" --trgt-proj "ACBackend" -m "agile:agile" -wbfc 
+```
+This example is moving 3 repositories from one organization to another within the same platform (azure). The token is exported which will be used automatically. The extra flags given at the end are to map the types (```-m```), export the wiki (```w```), boards (```b```), full history (```f```) , and saves it as a config file (```c```).
 
 ---
 ## Contributing
