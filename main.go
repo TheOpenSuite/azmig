@@ -310,6 +310,7 @@ type RunC struct {
 	TrgtTokn    string `help:"Target Personal Access Token (PAT). Defaults to source token if empty." name:"trgt-tokn"`
 	Wiki        bool   `help:"Migrates the wiki." optional:"" short:"w"`
 	Boards      bool   `help:"Migrates the boards and work items. AzuretoAzure only." optional:"" short:"b"`
+	FullHistory bool   `help:"Replay all revisions (Full History). Slower but more comprehensive." name:"full-history" short:"f"`
 	TypeMapping string `help:"Work item type mapping (e.g., 'Task:Task,Bug:Issue')." name:"type-mapping" short:"m"`
 	Config      bool   `help:"Saves flags to a JSON file named after the target project. Can be used to save your config or run multiple configs at once." short:"c" optional:""`
 }
@@ -602,7 +603,7 @@ func (r *RunC) migrateRepo(cli *CLI) error {
 
 	// Boards migration check and call
 	if r.Boards && r.SrcPlat == "azure" && r.TrgtPlat == "azure" {
-		if err := MigrateBoards(r.SrcOrg, r.SrcProj, r.SrcTokn, r.TrgtOrg, r.TrgtProj, r.TrgtTokn, r.TypeMapping); err != nil {
+		if err := MigrateBoards(r.SrcOrg, r.SrcProj, r.SrcTokn, r.TrgtOrg, r.TrgtProj, r.TrgtTokn, r.TypeMapping, r.FullHistory); err != nil {
 			return err
 		}
 	}
